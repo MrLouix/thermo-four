@@ -76,7 +76,10 @@ VCC → 3V3, GND → GND, SDA/SCL → bus I2C. Adresse 0x3C.
 ## Alimentation
 
 - LiPo 1S 2000 mAh sur le connecteur JST-PH de la Feather. **Vérifier la polarité** : rouge = + du côté marqué « + » sur la carte.
-- Interrupteur coupe-batterie en option : à placer entre la broche EN et GND de la Feather (l'interrupteur désactive le régulateur), plutôt que de couper le fil de la batterie.
+- **Interrupteur marche/arrêt (obligatoire)** : entre la broche **EN** et **GND** de la Feather. EN à GND coupe le régulateur 3,3 V, donc tout le montage s'éteint. Attention, la logique est inversée : **fermé = éteint, ouvert = allumé**.
+  - Pourquoi pas sur le fil de la batterie : la charge par USB-C continue de fonctionner boîtier éteint, l'interrupteur ne fait passer aucun courant de puissance (un micro-interrupteur suffit) et on ne touche pas aux fils de la LiPo.
+  - Consommation résiduelle à l'arrêt : quelques dizaines de µA (chargeur et jauge restent alimentés), soit des mois avant de vider la batterie. Recharger de temps en temps en cas de stockage prolongé.
+  - L'appui de 4 s sur Mode (veille profonde) reste disponible ; l'interrupteur sert d'arrêt matériel si le firmware est bloqué et évite les réveils accidentels pendant le rangement.
 - Charge par USB-C.
 
 ## Implantation dans le boîtier
