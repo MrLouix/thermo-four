@@ -56,3 +56,7 @@ pio test -e native    # tests unitaires : calculs NTC/Steinhart-Hart et alarmes
 ```
 
 La logique sans dépendance matérielle se trouve dans `lib/thermo_core/` ; le reste est dans `src/`, un module par fonction.
+
+## Licence
+
+GPL-3.0 — voir [`LICENSE`](LICENSE).
