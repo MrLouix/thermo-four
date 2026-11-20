@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - run: pip install platformio
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-native-${{ hashFiles('platformio.ini') }}
+      - name: Tests natifs (calculs NTC, alarmes)
+        run: pio test -e native
+
+  firmware:
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - run: pip install platformio
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-esp32-${{ hashFiles('platformio.ini') }}
+      - name: Compilation du firmware
+        run: pio run -e feather_s3
+      - name: Image LittleFS (interface web)
+        run: pio run -e feather_s3 -t buildfs
+      - name: Taille du firmware
+        run: ls -l .pio/build/feather_s3/*.bin
+
+  # Publication des binaires uniquement sur un tag vX.Y.Z (pas d'artefact Actions).
+  release:
+    needs: firmware
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: .github/workflows/ci.yml
+      - run: pip install platformio
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-esp32-${{ hashFiles('platformio.ini') }}
+      - run: pio run -e feather_s3 && pio run -e feather_s3 -t buildfs
+      - name: Release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd .pio/build/feather_s3
+          cp firmware.bin "thermo-four-${GITHUB_REF_NAME}-firmware.bin"
+          cp littlefs.bin "thermo-four-${GITHUB_REF_NAME}-littlefs.bin"
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --generate-notes \
+            "thermo-four-${GITHUB_REF_NAME}-firmware.bin" "thermo-four-${GITHUB_REF_NAME}-littlefs.bin"

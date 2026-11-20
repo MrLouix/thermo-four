@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Thermomètre four</title>
+<style>
+:root{--bg:#111;--card:#1c1c1c;--fg:#eee;--mut:#999;--acc:#ff7a1a;--ok:#4caf50;--bad:#e53935}
+*{box-sizing:border-box}body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+nav{display:flex;overflow-x:auto;background:#000;position:sticky;top:0}
+nav a{flex:1;padding:12px 8px;text-align:center;color:var(--mut);text-decoration:none;white-space:nowrap}
+nav a.on{color:var(--acc);border-bottom:2px solid var(--acc)}
+section{display:none;padding:12px}section.on{display:block}
+.card{background:var(--card);border-radius:10px;padding:12px;margin-bottom:12px}
+.big{font-size:3em;font-weight:600}.mut{color:var(--mut);font-size:.9em}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+input,select,button{font:inherit;padding:8px;border-radius:6px;border:1px solid #333;background:#222;color:var(--fg)}
+input[type=number]{width:6em}button{background:var(--acc);border:0;color:#000;font-weight:600}
+button.sec{background:#333;color:var(--fg)}#alarm{display:none;background:var(--bad);color:#fff;padding:14px;text-align:center;font-weight:700}
+canvas{width:100%;height:240px;background:#000;border-radius:8px}
+table{width:100%;border-collapse:collapse}td{padding:6px;border-bottom:1px solid #333}
+</style>
+</head>
+<body>
+<div id="alarm" onclick="api('/api/ack',{})">⚠ ALARME — toucher pour couper</div>
+<nav>
+<a href="#direct">Direct</a><a href="#alarmes">Alarmes</a><a href="#enreg">Enregistrement</a><a href="#calib">Calibration</a><a href="#reglages">Réglages</a>
+</nav>
+
+<section id="direct">
+  <div id="probes"></div>
+  <div class="card">
+    <div class="mut">Minuteur</div>
+    <div class="big" id="timer">--:--</div>
+    <div class="row"><input type="number" id="tmin" value="10" min="1"> min
+      <button onclick="api('/api/timer',{seconds:+tmin.value*60})">Démarrer</button>
+      <button class="sec" onclick="api('/api/timer',{seconds:0})">Arrêter</button></div>
+  </div>
+  <div class="mut" id="status"></div>
+</section>
+
+<section id="alarmes"><div id="alarmForms"></div>
+  <button onclick="saveAlarms()">Enregistrer</button></section>
+
+<section id="enreg">
+  <div class="card" id="recState"></div>
+  <div class="card">
+    <div class="row">Démarrage <select id="rmode"><option value="now">maintenant</option><option value="at">à une heure</option></select>
+      <input type="datetime-local" id="rat"></div>
+    <div class="row">Durée <input type="number" id="rdur" value="120" min="1"> min</div>
+    <div class="row">Mesure toutes les <input type="number" id="rint" value="10" min="1"> s</div>
+    <div class="row"><button onclick="startRec()">Programmer</button>
+      <button class="sec" onclick="api('/api/record',{stop:true})">Arrêter</button></div>
+  </div>
+  <div class="card"><table id="logs"></table></div>
+  <canvas id="chart" width="800" height="300"></canvas>
+</section>
+
+<section id="calib">
+  <div class="card">
+    <div class="row">Sonde <select id="cprobe" onchange="loadCalib()"><option value="0">1</option><option value="1">2</option></select></div>
+    <p class="mut">Plonger la sonde dans chaque bain, attendre que la mesure soit stable, puis capturer le point. Utiliser un thermomètre de référence si possible.</p>
+    <div id="cpoints"></div>
+    <button onclick="calib({action:'apply'})">Appliquer la calibration</button>
+  </div>
+  <div class="card">
+    <div class="mut">Ou saisir les données du fabricant</div>
+    <div class="row">R25 <input type="number" id="r25" value="100000"> Ω  B <input type="number" id="beta" value="3950"></div>
+    <button class="sec" onclick="calib({action:'beta',r25:+r25.value,beta:+beta.value})">Appliquer</button>
+  </div>
+</section>
+
+<section id="reglages">
+  <div class="card">
+    <div class="mut">Buzzer</div>
+    <div class="row">Volume <select id="vol"><option value="0">coupé</option><option value="1">faible</option><option value="2">moyen</option><option value="3">fort</option></select>
+      <button class="sec" onclick="api('/api/buzzer/test',{volume:+vol.value})">Tester</button></div>
+    <div class="row">Mise en veille de l'écran <input type="number" id="scr" min="0"> s (0 = jamais)</div>
+  </div>
+  <div class="card">
+    <div class="mut">Notifications</div>
+    <div class="row">Serveur ntfy <input id="nsrv" size="28"></div>
+    <div class="row">Sujet <input id="ntop" size="20"></div>
+    <div class="row">Webhook (n8n…) <input id="hook" size="28"></div>
+  </div>
+  <div class="card">
+    <div class="mut">Réseaux Wi‑Fi (mot de passe vide = inchangé). L'appareil redémarre après modification.</div>
+    <div id="wifi"></div>
+    <div class="row">Mot de passe du portail <input id="appass" type="password" placeholder="inchangé"></div>
+  </div>
+  <button onclick="saveSettings()">Enregistrer</button>
+</section>
+
+<script>
+const $=s=>document.querySelector(s);let S=null,ST=null;
+function nav(){const h=location.hash.slice(1)||'direct';document.querySelectorAll('section').forEach(e=>e.classList.toggle('on',e.id==h));
+ document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on',a.hash=='#'+h));if(h=='enreg')loadLogs();if(h=='calib')loadCalib();}
+addEventListener('hashchange',nav);
+async function api(u,b){const r=await fetch(u,b===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});
+ const j=await r.json().catch(()=>({}));if(j.error)alert(j.error);return j;}
+const fmt=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+
+function draw(st){ST=st;
+ $('#probes').innerHTML=st.probes.map((p,i)=>{const a=S?S.probes[i].alarm:{};return `<div class="card"><div class="mut">${p.name}</div>
+  <div class="big">${p.status=='ok'?p.t+' °C':'---'}</div><div class="mut">${p.status!='ok'?'Sonde '+p.status:''}
+  ${a.highOn?'Consigne '+a.high+' °C':''}</div></div>`}).join('');
+ $('#timer').textContent=st.timerS?fmt(st.timerS):'--:--';
+ $('#alarm').style.display=st.alarm?'block':'none';
+ $('#status').textContent=`Batterie ${st.battery<0?'?':st.battery+' %'} · IP ${st.ip}`;
+ const r=st.record;$('#recState').innerHTML=r.active?`● Enregistrement en cours : ${r.file} (${fmt(r.elapsedS)} / ${fmt(r.durationS)})`
+  :r.pending?`Programmé pour ${new Date(r.startAt*1000).toLocaleString('fr-FR')}`:'Aucun enregistrement en cours';}
+
+function alarmForms(){$('#alarmForms').innerHTML=S.probes.map((p,i)=>`<div class="card"><div class="row">Nom <input id="n${i}" value="${p.name}"></div>
+ <div class="row"><label><input type="checkbox" id="ho${i}" ${p.alarm.highOn?'checked':''}> Seuil haut</label><input type="number" id="h${i}" value="${p.alarm.high}"> °C</div>
+ <div class="row"><label><input type="checkbox" id="po${i}" ${p.alarm.preOn?'checked':''}> Pré-alerte</label><input type="number" id="pd${i}" value="${p.alarm.preDelta}"> °C avant</div>
+ <div class="row"><label><input type="checkbox" id="lo${i}" ${p.alarm.lowOn?'checked':''}> Seuil bas</label><input type="number" id="l${i}" value="${p.alarm.low}"> °C</div></div>`).join('');}
+function saveAlarms(){const probes=S.probes.map((_,i)=>({name:$('#n'+i).value,alarm:{highOn:$('#ho'+i).checked,high:+$('#h'+i).value,
+ preOn:$('#po'+i).checked,preDelta:+$('#pd'+i).value,lowOn:$('#lo'+i).checked,low:+$('#l'+i).value}}));api('/api/settings',{probes}).then(load);}
+
+function settingsForm(){vol.value=S.volume;scr.value=S.screenTimeoutS;nsrv.value=S.ntfyServer;ntop.value=S.ntfyTopic;hook.value=S.webhookUrl;
+ $('#wifi').innerHTML=S.wifi.map((w,i)=>`<div class="row">${i+1}. <input id="ws${i}" placeholder="SSID" value="${w.ssid}"><input id="wp${i}" type="password" placeholder="mot de passe"></div>`).join('');}
+function saveSettings(){const wifi=S.wifi.map((w,i)=>{const o={ssid:$('#ws'+i).value};if($('#wp'+i).value)o.pass=$('#wp'+i).value;return o});
+ const changed=wifi.some((w,i)=>w.ssid!=S.wifi[i].ssid||w.pass);const b={volume:+vol.value,screenTimeoutS:+scr.value,ntfyServer:nsrv.value,ntfyTopic:ntop.value,webhookUrl:hook.value};
+ if(changed)b.wifi=wifi;if(appass.value)b.apPass=appass.value;api('/api/settings',b).then(()=>{if(changed||appass.value)alert('Redémarrage en cours…');load();});}
+
+function startRec(){const b={durationS:+rdur.value*60,intervalS:+rint.value};if(rmode.value=='at'){if(!rat.value)return alert('Choisir une heure');b.startAt=Math.floor(new Date(rat.value)/1000);}api('/api/record',b);}
+async function loadLogs(){const l=await api('/api/logs');$('#logs').innerHTML=l.sort((a,b)=>a.name<b.name?1:-1).map(f=>`<tr><td><a href="#enreg" onclick="chart('${f.name}')">${f.name}</a></td>
+ <td>${(f.size/1024).toFixed(1)} Ko</td><td><a href="/logs/${f.name}" download>CSV</a></td><td><a href="#enreg" onclick="delLog('${f.name}')">✕</a></td></tr>`).join('')||'<tr><td class="mut">Aucun fichier</td></tr>';}
+function delLog(n){if(confirm('Supprimer '+n+' ?'))api('/api/logs/delete',{name:n}).then(loadLogs);}
+async function chart(n){const t=await (await fetch('/logs/'+n)).text();const rows=t.trim().split('\n').slice(1).map(l=>l.split(','));
+ const c=$('#chart'),g=c.getContext('2d'),W=c.width,H=c.height,P=30;g.clearRect(0,0,W,H);if(!rows.length)return;
+ const xs=rows.map(r=>+r[1]),ser=[2,3].map(k=>rows.map(r=>r[k]===''?null:+r[k]));const all=ser.flat().filter(v=>v!==null);
+ const lo=Math.floor(Math.min(...all,0)/10)*10,hi=Math.ceil(Math.max(...all,10)/10)*10,xm=Math.max(...xs,1);
+ const X=x=>P+(W-2*P)*x/xm,Y=v=>H-P-(H-2*P)*(v-lo)/(hi-lo);g.strokeStyle='#333';g.fillStyle='#999';g.font='12px sans-serif';
+ for(let v=lo;v<=hi;v+=Math.max(10,Math.round((hi-lo)/50)*10)){g.beginPath();g.moveTo(P,Y(v));g.lineTo(W-P,Y(v));g.stroke();g.fillText(v,2,Y(v)+4);}
+ ['#ff7a1a','#4fc3f7'].forEach((col,k)=>{g.strokeStyle=col;g.lineWidth=2;g.beginPath();let up=false;ser[k].forEach((v,i)=>{if(v===null){up=false;return}
+  up?g.lineTo(X(xs[i]),Y(v)):g.moveTo(X(xs[i]),Y(v));up=true;});g.stroke();});
+ g.fillStyle='#999';g.fillText(fmt(xm)+' (min:s)',W-P-70,H-8);}
+
+async function loadCalib(){const p=+cprobe.value,c=await api('/api/calibrate?probe='+p),def=[0,25,100];
+ $('#cpoints').innerHTML=c.points.map((pt,i)=>`<div class="row">Point ${i+1} : <input type="number" id="ct${i}" value="${pt.set?pt.t:def[i]}"> °C
+  <button class="sec" onclick="calib({action:'capture',point:${i},tempC:+ct${i}.value})">Capturer</button>
+  <span class="mut">${pt.set?pt.r+' Ω':''}</span></div>`).join('')+`<div class="mut">${c.calibrated?'Sonde calibrée':'Non calibrée (modèle bêta)'}</div>`;}
+function calib(b){b.probe=+cprobe.value;api('/api/calibrate',b).then(loadCalib);}
+
+async function load(){S=await api('/api/settings');alarmForms();settingsForm();if(ST)draw(ST);}
+load();nav();api('/api/state').then(draw);
+const es=new EventSource('/events');es.addEventListener('state',e=>draw(JSON.parse(e.data)));
+</script>
+</body>
+</html>
